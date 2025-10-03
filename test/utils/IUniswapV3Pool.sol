@@ -16,4 +16,16 @@ interface IUniswapV3Pool {
         );
 
     function liquidity() external view returns (uint128);
+
+    /// @notice Oracle: cumulative tick & seconds-per-liquidity for TWAPs
+    /// @param secondsAgos [0, Δt] -> returns cumulative values at now and Δt seconds ago
+    function observe(
+        uint32[] calldata secondsAgos
+    )
+        external
+        view
+        returns (
+            int56[] memory tickCumulatives,
+            uint160[] memory secondsPerLiquidityCumulativeX128
+        );
 }
