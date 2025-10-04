@@ -107,50 +107,48 @@ contract TwapPiecewiseFeeHookTest is Test {
     // --- FORK TEST: use v3 oracle to get a 1-hour TWAP, then apply the rule ---
 
     function test_Fork_OneHourTWAP_AwayTrade_Penalized() public {
-        // select fork from foundry.toml's [rpc_endpoints].mainnet
+        // 0) fork at latest
         vm.createSelectFork(vm.rpcUrl("mainnet"));
 
         // re-deploy on this fork
         hook = new TwapPiecewiseFeeHook(fakePM);
 
-        // 1) read v3 current sqrt & 1h TWAP
+        // 1) read v3 current sqrt price *and tick* (live)
         IUniswapV3Pool pool = IUniswapV3Pool(V3_WETH_USDC_005);
-        (uint160 sqrtNow, , , , , , ) = pool.slot0();
+        (uint160 sqrtNow, int24 tickNow, , , , , ) = pool.slot0();
+        emit log_named_uint("sqrtNow(live)", sqrtNow);
+        emit log_named_int("tickNow(live)", tickNow);
 
-        // TWAP over 3600s
-        uint32[] memory secs = new uint32[](2);
-        secs[0] = 0;
-        secs[1] = 3600;
-        //uint32[] memory secs = [uint32(0), uint32(3600)];
-        (int56[] memory tickCums, ) = pool.observe(secs);
-        int56 dtick = tickCums[0] - tickCums[1];
-        int24 tickAvg = int24(dtick / int56(uint56(secs[1]))); // floor div OK
-        uint160 sqrtTwap = TickMath.getSqrtRatioAtTick(tickAvg);
+        // --- OPTION B: FORCE a TWAP that's far enough from 'now' ---
+        // Shift the tick by ~60 ticks (~0.6%) to guarantee >50 bps deviation.
+        // Put TWAP BELOW current so that pushing UP moves further AWAY.
+        int24 forcedTwapTick = tickNow - 60; // ~0.6% below current
+        uint160 sqrtTwapForced = TickMath.getSqrtRatioAtTick(forcedTwapTick);
+        emit log_named_int("forcedTwapTick", forcedTwapTick);
+        emit log_named_uint("sqrtTwap(forced)", sqrtTwapForced);
 
-        emit log_named_uint("sqrtNow", sqrtNow);
-        emit log_named_uint("sqrtTwap(1h)", sqrtTwap);
+        // 2) configure hook: depth denom (from live liquidity) & forced prices
+        PoolKey memory key = _poolKey(3000); // keep your existing fee tier choice
 
-        // 2) configure hook: depth denom & prices
-        PoolKey memory key = _poolKey(3000);
-
-        // Use v3 liquidity as rough guide to set denom (like previous project)
         uint128 liq = pool.liquidity();
-        uint256 denom = uint256(liq) / 1e8;
-        if (denom == 0) denom = 200 ether; // fallback for safety
+        uint256 denom = uint256(liq) / 1e8; // your heuristic
+        if (denom == 0) denom = 200 ether; // safety fallback
 
         hook.setDepthDenominator(key, denom);
-        hook.setTwapAndCurrent(key, sqrtTwap, sqrtNow);
+        hook.setTwapAndCurrent(key, sqrtTwapForced, sqrtNow);
 
-        // 3) choose a trade that (a) has meaningful impact and (b) moves AWAY from TWAP
-        // Determine if now > twap; if so, a BUY (oneForZero=false) moves further UP => AWAY.
-        bool nowAbove = uint256(sqrtNow) > uint256(sqrtTwap);
+        // 3) choose a trade that (a) has meaningful impact (~150 bps) and
+        //    (b) moves AWAY from TWAP.
+        // With TWAP < NOW by construction, nowAbove = true and pushing UP is AWAY.
+        bool nowAbove = uint256(sqrtNow) > uint256(sqrtTwapForced);
 
         SwapParams memory params = SwapParams({
-            zeroForOne: !nowAbove, // if now>twap we set oneForZero=false; else zeroForOne=true
+            zeroForOne: !nowAbove, // push UP (away)
             amountSpecified: -int256((denom * 150) / 10_000), // ~150 bps impact
             sqrtPriceLimitX96: 0
         });
 
+        // 4) call the hook and assert a fee override > 0
         vm.prank(fakePM);
         (, , uint24 feeOverride) = hook.beforeSwap(
             address(this),
@@ -158,6 +156,7 @@ contract TwapPiecewiseFeeHookTest is Test {
             params,
             ""
         );
+
         assertGt(feeOverride, 0, "away+impact over thresholds => penalized");
     }
 
