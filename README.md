@@ -28,7 +28,7 @@ This project uses [Foundry](https://book.getfoundry.sh/) for development and tes
     forge test --fork-url FORK_URL
     ```
 
-## Project 1: 
+## Project 1: Impact-Scaled Fee Hook
 ### Overview
 This project implements a hook that scales liquidity provider fees based on the estimated slippage caused by a trade. The idea is to discourage large, slippage-heavy swaps and reduce the incentives for MEV strategies like sandwich attacks.
 ### Hook Contract ``` ImpactScaledFeeHook.sol ```
@@ -91,7 +91,7 @@ If both exceed thresholds, applies a piecewise linear fee bump (capped).
     - Validate toward-TWAP trades stay at base fee.
 
 
-## Project 3:
+## Project 3: Reentrancy Attack Simulation
 ### Overview
 
 This project explores Uniswap’s reentrancy protections by attempting to reenter the PoolManager during a swap. It is designed as a security test to ensure that nested calls are blocked.
